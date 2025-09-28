@@ -1,4 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 sqlalchemy
-pydantic
+python-multipart
+pydantic[email]
