@@ -7,11 +7,21 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr
 from database import Base, engine, SessionLocal
 from models import News, Contact
+from fastapi.middleware.cors import CORSMiddleware
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="News + Contact API")
+
+# ✅ Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 👈 Allow all origins (or specify a list like ["http://localhost:3000"])
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 📁 Ensure upload directory exists
 os.makedirs("uploads", exist_ok=True)
