@@ -1,4 +1,5 @@
 import os
+import asyncio
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
@@ -9,6 +10,7 @@ from pydantic import BaseModel, EmailStr
 from database import Base, engine, SessionLocal
 from models import News, Contact, User
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 from auth import (
     create_access_token,
     authenticate_user,
@@ -39,6 +41,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Keep-alive background task to prevent Render spin-down
+async def keep_alive():
+    """Prints a message every 10 minutes to keep the service active"""
+    while True:
+        await asyncio.sleep(600)  # 600 seconds = 10 minutes
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"⏰ Keep-alive heartbeat at {current_time} - Server is active!")
+
+@app.on_event("startup")
+async def startup_event():
+    """Run tasks on application startup"""
+    print("🚀 Server starting up...")
+    print("💓 Keep-alive service initialized - heartbeat every 10 minutes")
+    asyncio.create_task(keep_alive())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Run tasks on application shutdown"""
+    print("🛑 Server shutting down...")
 
 # Ensure upload directory exists
 os.makedirs("uploads", exist_ok=True)
@@ -77,6 +99,13 @@ class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
 
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    is_active: Optional[bool] = None
+
+    class Config:
+        orm_mode = True
+
 # News Schema
 class NewsResponse(BaseModel):
     id: int
@@ -85,6 +114,14 @@ class NewsResponse(BaseModel):
     author: str
     image_url: Optional[str] = None
     created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class NewsUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    author: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -99,6 +136,15 @@ class ContactCreate(BaseModel):
 class ContactResponse(ContactCreate):
     id: int
     created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class ContactUpdate(BaseModel):
+    firstname: Optional[str] = None
+    lastname: Optional[str] = None
+    email: Optional[EmailStr] = None
+    message: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -184,6 +230,22 @@ async def logout(current_user: User = Depends(get_current_active_user)):
 @app.get("/me", response_model=UserResponse)
 async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
     """Get current user information"""
+    return current_user
+
+@app.patch("/me", response_model=UserResponse)
+async def update_current_user(
+    user_update: UserUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update current user information (partial update)"""
+    update_data = user_update.dict(exclude_unset=True)
+    
+    for field, value in update_data.items():
+        setattr(current_user, field, value)
+    
+    db.commit()
+    db.refresh(current_user)
     return current_user
 
 @app.post("/change-password")
@@ -276,6 +338,41 @@ async def update_news(
     return article
 
 
+@app.patch("/news/{news_id}", response_model=NewsResponse)
+async def patch_news(
+    news_id: int,
+    title: Optional[str] = Form(None),
+    content: Optional[str] = Form(None),
+    author: Optional[str] = Form(None),
+    image: UploadFile = File(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)  # Protected
+):
+    """Partially update news article - can update any combination of fields (requires authentication)"""
+    article = db.query(News).filter(News.id == news_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="News not found")
+
+    # Update text fields if provided
+    if title is not None:
+        article.title = title
+    if content is not None:
+        article.content = content
+    if author is not None:
+        article.author = author
+    
+    # Update image if provided
+    if image:
+        file_path = f"uploads/{image.filename}"
+        with open(file_path, "wb") as f:
+            f.write(await image.read())
+        article.image_url = f"/uploads/{image.filename}"
+
+    db.commit()
+    db.refresh(article)
+    return article
+
+
 @app.delete("/news/{news_id}")
 def delete_news(
     news_id: int,
@@ -322,6 +419,27 @@ def get_contact(
         raise HTTPException(status_code=404, detail="Contact not found")
     return contact
 
+@app.patch("/contact/{contact_id}", response_model=ContactResponse)
+def patch_contact(
+    contact_id: int,
+    contact_update: ContactUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)  # Protected
+):
+    """Partially update contact message (requires authentication)"""
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    
+    # Only update fields that were provided
+    update_data = contact_update.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(contact, field, value)
+    
+    db.commit()
+    db.refresh(contact)
+    return contact
+
 @app.delete("/contact/{contact_id}")
 def delete_contact(
     contact_id: int,
@@ -335,3 +453,6 @@ def delete_contact(
     db.delete(contact)
     db.commit()
     return {"detail": "Contact deleted"}
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="127.0.0.1", port=5000, reload=True)
