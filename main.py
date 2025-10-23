@@ -343,40 +343,80 @@ async def update_news(
     return article
 
 
+# @app.patch("/news/{news_id}", response_model=NewsResponse)
+# async def patch_news(
+#     news_id: int,
+#     title: Optional[str] = Form(None),
+#     content: Optional[str] = Form(None),
+#     author: Optional[str] = Form(None),
+#     image: UploadFile = File(None),
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_active_user)  # Protected
+# ):
+#     """Partially update news article - can update any combination of fields (requires authentication)"""
+#     article = db.query(News).filter(News.id == news_id).first()
+#     if not article:
+#         raise HTTPException(status_code=404, detail="News not found")
+
+#     # Update text fields if provided
+#     if title is not None:
+#         article.title = title
+#     if content is not None:
+#         article.content = content
+#     if author is not None:
+#         article.author = author
+    
+#     # Update image if provided
+#     if image:
+#         file_path = f"uploads/{image.filename}"
+#         with open(file_path, "wb") as f:
+#             f.write(await image.read())
+#         article.image_url = f"/uploads/{image.filename}"
+
+#     db.commit()
+#     db.refresh(article)
+#     return article
+
 @app.patch("/news/{news_id}", response_model=NewsResponse)
 async def patch_news(
     news_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
     title: Optional[str] = Form(None),
     content: Optional[str] = Form(None),
     author: Optional[str] = Form(None),
-    image: UploadFile = File(None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)  # Protected
+    image: Optional[UploadFile] = File(None)
 ):
-    """Partially update news article - can update any combination of fields (requires authentication)"""
+    """Partially update news article (requires authentication)"""
     article = db.query(News).filter(News.id == news_id).first()
     if not article:
         raise HTTPException(status_code=404, detail="News not found")
 
-    # Update text fields if provided
-    if title is not None:
-        article.title = title
-    if content is not None:
-        article.content = content
-    if author is not None:
-        article.author = author
+    # Check if any field was actually provided
+    updated = False
     
-    # Update image if provided
-    if image:
+    if title is not None and title.strip():
+        article.title = title
+        updated = True
+    if content is not None and content.strip():
+        article.content = content
+        updated = True
+    if author is not None and author.strip():
+        article.author = author
+        updated = True
+    if image is not None:
         file_path = f"uploads/{image.filename}"
         with open(file_path, "wb") as f:
             f.write(await image.read())
         article.image_url = f"/uploads/{image.filename}"
+        updated = True
+
+    if not updated:
+        raise HTTPException(status_code=400, detail="No fields to update")
 
     db.commit()
     db.refresh(article)
     return article
-
 
 @app.delete("/news/{news_id}")
 def delete_news(
