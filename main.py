@@ -42,6 +42,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.options("/{rest_of_path:path}")
+async def preflight_handler():
+    return {}
+
+
 # Keep-alive background task to prevent Render spin-down
 async def keep_alive():
     """Prints a message every 10 minutes to keep the service active"""
